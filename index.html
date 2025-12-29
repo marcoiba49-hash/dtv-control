@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Esta etiqueta fuerza a intentar cargar todo por HTTPS -->
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <title>DTV-CONTROL Bolivia</title>
+    
+    <!-- Tailwind CSS (HTTPS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS (HTTPS) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- FontAwesome Icons (HTTPS) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Google Fonts (HTTPS) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        #map { z-index: 0; cursor: crosshair; }
+        .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .history-scroll::-webkit-scrollbar { width: 6px; }
+        .history-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+        .history-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .sim-mode-active { border: 4px solid #f59e0b; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- PANTALLA DE LOGIN -->
+    <div id="loginOverlay" class="fixed inset-0 bg-slate-900 z-[5000] flex items-center justify-center p-4 transition-opacity duration-500">
+        <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center">
+            <div class="bg-yellow-400 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <i class="fa-solid fa-lock text-slate-900 text-2xl"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-slate-800 mb-2">DTV-CONTROL</h2>
+            <p class="text-gray-500 mb-6">Acceso Nacional - Bolivia</p>
+            
+            <input type="password" id="accessCode" 
+                class="w-full bg-gray-100 border border-gray-300 text-gray-900 text-lg rounded-lg focus:ring-yellow-400 focus:border-yellow-400 block p-3 mb-4 text-center tracking-widest outline-none transition-all" 
+                placeholder="Ingrese Clave" maxlength="10">
+                
+            <button onclick="verifyAccess()" class="w-full text-slate-900 bg-yellow-400 hover:bg-yellow-500 focus:ring-4 focus:outline-none focus:ring-yellow-300 font-bold rounded-lg text-lg px-5 py-3 text-center transition-transform active:scale-95 shadow-md">
+                Ingresar al Sistema
+            </button>
+            <p id="loginError" class="text-rose-500 text-sm mt-4 hidden font-bold animate-pulse">
+                <i class="fa-solid fa-circle-exclamation mr-1"></i> Clave incorrecta
+            </p>
+            <p class="text-xs text-gray-400 mt-4">Clave: Trafic2025</p>
+        </div>
+    </div>
+
+    <!-- BANNER DE MODO SIMULACIÓN -->
+    <div id="simModeBanner" class="fixed top-[70px] left-0 right-0 bg-orange-500 text-white text-center py-2 z-[2000] hidden shadow-lg animate-bounce">
+        <i class="fa-solid fa-hand-pointer mr-2"></i> <b>MODO MANUAL:</b> Toca el mapa para mover el taxi (GPS bloqueado por falta de HTTPS)
+    </div>
+
+    <!-- MODAL DE HISTORIAL -->
+    <div id="historyModal" class="fixed inset-0 bg-black/50 z-[2000] hidden flex items-end md:items-center justify-center p-0 md:p-4 transition-all duration-300 backdrop-blur-sm">
+        <div class="bg-white w-full md:max-w-md h-[80vh] md:h-auto md:max-h-[80vh] rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="bg-slate-900 text-white p-4 flex justify-between items-center shrink-0">
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-clock-rotate-left mr-2 text-yellow-400"></i>Historial</h3>
+                <button onclick="toggleHistory()" class="text-gray-400 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            <div id="historyList" class="flex-grow overflow-y-auto history-scroll p-4 space-y-3 bg-gray-50"></div>
+            <div class="p-4 border-t border-gray-200 bg-white shrink-0 flex justify-between items-center">
+                <span id="historyCount" class="text-xs font-semibold text-gray-500">0 Viajes</span>
+                <button onclick="clearHistory()" class="text-rose-600 text-sm font-semibold hover:text-rose-800">Borrar Todo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Encabezado -->
+    <header class="bg-yellow-400 text-slate-900 p-4 shadow-lg z-10 relative">
+        <div class="max-w-3xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="bg-slate-900 text-yellow-400 p-2 rounded-lg">
+                    <i class="fa-solid fa-taxi text-xl"></i>
+                </div>
+                <h1 class="font-bold text-lg md:text-xl">DTV-CONTROL</h1>
+            </div>
+            <div class="flex items-center gap-3">
+                <div id="statusIndicator" class="flex items-center gap-2 text-sm font-semibold opacity-70 hidden md:flex">
+                    <span class="w-3 h-3 rounded-full bg-slate-500"></span>
+                    <span id="statusText">Iniciando...</span>
+                </div>
+                <button onclick="toggleHistory()" class="bg-slate-900 text-white p-2 rounded-lg hover:bg-slate-800 transition-colors shadow-md relative">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Notificación Toast -->
+    <div id="toast" class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl z-[3000] transition-all duration-300 opacity-0 translate-y-[-20px] pointer-events-none flex items-center gap-3 w-max">
+        <i class="fa-solid fa-circle-check text-emerald-400"></i>
+        <span id="toastMsg" class="font-semibold text-sm">Notificación</span>
+    </div>
+
+    <!-- Botón Cerrar Vista -->
+    <button id="btnCloseView" onclick="exitViewMode()" class="fixed top-28 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-4 py-2 rounded-full shadow-lg z-[1000] hidden hover:bg-slate-800 transition-colors text-sm font-bold">
+        <i class="fa-solid fa-xmark mr-2"></i>Cerrar Vista
+    </button>
+
+    <!-- Panel de Control y Estadísticas -->
+    <div class="bg-white border-b border-gray-200 z-10">
+        <div class="max-w-3xl mx-auto p-4">
+            <!-- Grid de Estadísticas -->
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="flex flex-col items-center justify-center p-3 md:p-4 bg-slate-50 rounded-xl border border-gray-200 shadow-sm">
+                    <span class="text-gray-500 text-xs uppercase tracking-wider font-bold mb-1">Distancia</span>
+                    <div class="text-2xl md:text-4xl font-extrabold text-slate-800 flex items-baseline">
+                        <span id="distanceDisplay">0.00</span>
+                        <span class="text-sm md:text-lg text-slate-500 ml-1 font-semibold">km</span>
+                    </div>
+                </div>
+                <div class="flex flex-col items-center justify-center p-3 md:p-4 bg-yellow-50 rounded-xl border border-yellow-200 shadow-sm">
+                    <span class="text-yellow-700 text-xs uppercase tracking-wider font-bold mb-1">Costo Total</span>
+                    <div class="text-2xl md:text-4xl font-extrabold text-slate-900 flex items-baseline">
+                        <span class="text-sm md:text-lg text-yellow-600 mr-1 font-semibold">Bs</span>
+                        <span id="costDisplay">0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Botones de Control -->
+            <div class="grid grid-cols-2 gap-4">
+                <button id="btnStart" onclick="startTracking()" class="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold py-4 px-6 rounded-xl shadow-md transition-all transform active:scale-95">
+                    <i class="fa-solid fa-play"></i> Iniciar
+                </button>
+                <button id="btnStop" onclick="stopTracking()" class="hidden flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold py-4 px-6 rounded-xl shadow-md transition-all transform active:scale-95">
+                    <i class="fa-solid fa-pause"></i> Pausar
+                </button>
+                <button id="btnReset" onclick="resetTracking()" class="flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-4 px-6 rounded-xl shadow-sm transition-all">
+                    <i class="fa-solid fa-flag-checkered"></i> Finalizar
+                </button>
+            </div>
+            
+            <div class="mt-2 text-center flex justify-center gap-4">
+                 <span class="text-[10px] text-gray-400">Tarifa: 0.80 Bs/km</span>
+                 <button onclick="forceManualMode()" class="text-[10px] text-orange-500 underline font-bold">Activar Modo Manual</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contenedor del Mapa -->
+    <div id="mapContainer" class="flex-grow relative bg-gray-200">
+        <div id="map" class="absolute inset-0 h-full w-full"></div>
+        <button onclick="centerMapOnUser()" class="absolute bottom-6 right-6 z-[1000] bg-white text-slate-700 p-3 rounded-full shadow-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-yellow-400">
+            <i class="fa-solid fa-location-crosshairs text-xl"></i>
+        </button>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // --- Variables ---
+        let map;
+        let watchId = null;
+        let userPathLine = null;
+        let currentMarker = null;
+        let pathCoordinates = []; 
+        let totalDistanceMeters = 0;
+        let isTracking = false;
+        let tripStartTime = null; 
+        let viewModeLine = null;
+        let simulationMode = false;
+        
+        const defaultZoom = 15;
+        const BOLIVIA_CENTER = [-16.2902, -63.5887]; 
+        const ORURO_CENTER = [-17.9647, -67.1060];
+        const RADIO_PERMITIDO_KM = 1200; 
+        const APP_KEY = "Trafic2025";
+        const COST_PER_KM = 0.8;
+        
+        // --- UI Refs ---
+        const distanceDisplay = document.getElementById('distanceDisplay');
+        const costDisplay = document.getElementById('costDisplay');
+        const btnStart = document.getElementById('btnStart');
+        const btnStop = document.getElementById('btnStop');
+        const btnReset = document.getElementById('btnReset');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusTextLabel = document.getElementById('statusText');
+        const statusDot = statusIndicator.querySelector('span:first-child');
+        const simModeBanner = document.getElementById('simModeBanner');
+        const mapContainer = document.getElementById('mapContainer');
+
+        // --- LOGIN ---
+        function verifyAccess() {
+            const input = document.getElementById('accessCode');
+            const overlay = document.getElementById('loginOverlay');
+            if (input.value === APP_KEY) {
+                overlay.style.opacity = '0';
+                setTimeout(() => { overlay.classList.add('hidden'); initMap(); }, 500);
+            } else {
+                document.getElementById('loginError').classList.remove('hidden');
+                input.classList.add('border-rose-500', 'bg-rose-50');
+            }
+        }
+        document.getElementById('accessCode').addEventListener('keypress', e => { if (e.key === 'Enter') verifyAccess(); });
+
+        // --- MAPA ---
+        function initMap() {
+            // Todos los tiles ahora se piden explícitamente por HTTPS
+            map = L.map('map').setView(ORURO_CENTER, 14);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 19
+            }).addTo(map);
+            
+            updateStatusText("Esperando GPS...", "wait");
+            
+            // Evento CLICK en el mapa (Para modo simulación)
+            map.on('click', function(e) {
+                if (simulationMode && isTracking) {
+                    handlePositionUpdate({
+                        coords: { latitude: e.latlng.lat, longitude: e.latlng.lng, accuracy: 10 }
+                    });
+                }
+            });
+
+            attemptGetLocation();
+        }
+
+        // --- GEOLOCALIZACIÓN Y ERRORES DE HTTPS ---
+        function attemptGetLocation() {
+            // Verificar si el contexto es seguro (HTTPS o localhost)
+            const isSecure = location.protocol === 'https:' || location.hostname === 'localhost';
+            
+            if (!navigator.geolocation) {
+                activateSimulationMode("Navegador antiguo sin GPS");
+                return;
+            }
+
+            // Si detectamos que no es seguro, advertimos pero intentamos igual (algunos navegadores viejos lo permiten)
+            if (!isSecure) {
+                console.warn("ADVERTENCIA: Archivo abierto sin HTTPS. El GPS podría fallar.");
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (pos) => handleSuccess(pos),
+                (err) => {
+                    // Si falla el GPS, analizamos si es por falta de HTTPS
+                    console.warn("Fallo GPS:", err.message);
+                    let msg = "GPS no disponible";
+                    
+                    if (location.protocol === 'file:') {
+                        msg = "Bloqueo de Seguridad (Archivo Local)";
+                        alert("AVISO DE CHROME: No se permite GPS en archivos locales ('file://').\n\nSolución 1: Sube este archivo a un host gratuito (GitHub/Netlify).\nSolución 2: Usa el MODO MANUAL que se activará ahora.");
+                    } else if (!isSecure) {
+                        msg = "Falta HTTPS";
+                    }
+
+                    activateSimulationMode(msg);
+                },
+                { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+            );
+        }
+
+        function handleSuccess(position) {
+            const { latitude, longitude } = position.coords;
+            map.setView([latitude, longitude], defaultZoom);
+            updateMarker([latitude, longitude]);
+            updateStatusText("Listo para iniciar", "idle");
+            simulationMode = false;
+            simModeBanner.classList.add('hidden');
+            mapContainer.classList.remove('sim-mode-active');
+        }
+
+        function activateSimulationMode(reason) {
+            simulationMode = true;
+            updateStatusText("Modo Manual", "wait");
+            simModeBanner.innerHTML = `<i class="fa-solid fa-hand-pointer mr-2"></i> <b>MODO MANUAL (${reason}):</b> Toca el mapa para mover el taxi.`;
+            simModeBanner.classList.remove('hidden');
+            mapContainer.classList.add('sim-mode-active');
+            
+            if (!currentMarker) {
+                const center = map.getCenter();
+                updateMarker([center.lat, center.lng]);
+            }
+        }
+        
+        function forceManualMode() {
+            if(simulationMode) return;
+            activateSimulationMode("Usuario");
+        }
+
+        // --- RASTREO ---
+        function startTracking() {
+            if (viewModeLine) exitViewMode();
+            
+            isTracking = true;
+            if (!tripStartTime) tripStartTime = new Date();
+            updateUIState('tracking');
+
+            if (!simulationMode) {
+                if (navigator.geolocation) {
+                    watchId = navigator.geolocation.watchPosition(
+                        handlePositionUpdate, 
+                        (err) => {
+                            console.warn("Error Watch:", err);
+                            if (!simulationMode) activateSimulationMode("Señal perdida");
+                        }, 
+                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                    );
+                }
+            } else {
+                showToast("Toca el mapa para avanzar");
+            }
+        }
+
+        function stopTracking() {
+            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+            isTracking = false;
+            updateUIState('stopped');
+        }
+
+        function resetTracking() {
+            stopTracking();
+            if (totalDistanceMeters > 0) {
+                saveTripToHistory();
+                showToast("Viaje guardado");
+            }
+            
+            pathCoordinates = []; totalDistanceMeters = 0; tripStartTime = null;
+            if (userPathLine) { map.removeLayer(userPathLine); userPathLine = null; }
+            distanceDisplay.innerText = "0.00"; costDisplay.innerText = "0.00";
+            updateUIState('idle');
+        }
+
+        function handlePositionUpdate(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const newLatLng = L.latLng(lat, lng);
+
+            if (!checkGeofence(lat, lng)) {
+                if(!confirm("Estás fuera de Bolivia. ¿Continuar?")) {
+                    stopTracking(); return;
+                }
+            }
+
+            updateMarker([lat, lng]);
+
+            if (pathCoordinates.length === 0) {
+                pathCoordinates.push(newLatLng);
+                map.setView(newLatLng, defaultZoom);
+                return;
+            }
+
+            const lastLatLng = pathCoordinates[pathCoordinates.length - 1];
+            const distance = lastLatLng.distanceTo(newLatLng);
+
+            if (distance > 2 || simulationMode) { 
+                pathCoordinates.push(newLatLng);
+                totalDistanceMeters += distance;
+                updateDisplays();
+                drawPath();
+                if(!simulationMode) map.panTo(newLatLng);
+            }
+        }
+
+        function checkGeofence(lat, lng) {
+            return (L.latLng(BOLIVIA_CENTER).distanceTo(L.latLng(lat, lng)) / 1000) <= RADIO_PERMITIDO_KM;
+        }
+
+        // --- UTILS ---
+        function updateMarker(latLng) {
+            const taxiIcon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background-color: #facc15; width: 24px; height: 24px; border-radius: 50%; border: 3px solid #0f172a; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`,
+                iconSize: [24, 24], iconAnchor: [12, 12]
+            });
+            if (currentMarker) currentMarker.setLatLng(latLng);
+            else currentMarker = L.marker(latLng, { icon: taxiIcon }).addTo(map);
+        }
+
+        function drawPath() {
+            if (userPathLine) map.removeLayer(userPathLine);
+            userPathLine = L.polyline(pathCoordinates, { color: '#2563eb', weight: 5, opacity: 0.8, lineJoin: 'round' }).addTo(map);
+        }
+
+        function updateDisplays() {
+            const km = totalDistanceMeters / 1000;
+            distanceDisplay.innerText = km.toFixed(2);
+            costDisplay.innerText = (km * COST_PER_KM).toFixed(2);
+        }
+
+        function updateStatusText(text, type) {
+            statusTextLabel.innerText = text;
+            statusDot.className = "w-3 h-3 rounded-full transition-colors duration-300";
+            statusTextLabel.className = "transition-colors duration-300";
+            if (type === 'tracking') { statusDot.classList.add('bg-emerald-500', 'animate-pulse-slow'); statusTextLabel.classList.add('text-emerald-700', 'font-bold'); }
+            else if (type === 'error') { statusDot.classList.add('bg-orange-500'); statusTextLabel.classList.add('text-orange-700', 'font-bold'); }
+            else if (type === 'wait') { statusDot.classList.add('bg-blue-400', 'animate-pulse'); statusTextLabel.classList.add('text-blue-600'); }
+            else { statusDot.classList.add('bg-slate-500'); statusTextLabel.classList.add('text-slate-500', 'font-semibold'); }
+        }
+        
+        function updateUIState(state) {
+            if (state === 'tracking') {
+                btnStart.classList.add('hidden'); btnStop.classList.remove('hidden');
+                btnReset.disabled = true; btnReset.classList.add('opacity-50', 'cursor-not-allowed');
+            } else if (state === 'stopped') {
+                btnStart.classList.remove('hidden'); btnStop.classList.add('hidden');
+                btnStart.innerHTML = '<i class="fa-solid fa-play"></i> Continuar';
+                btnReset.disabled = false; btnReset.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else { 
+                btnStart.classList.remove('hidden'); btnStop.classList.add('hidden');
+                btnStart.innerHTML = '<i class="fa-solid fa-play"></i> Iniciar';
+                btnReset.disabled = false; updateStatusText(simulationMode ? "Modo Manual" : "Listo", 'idle');
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            toast.classList.remove('opacity-0', 'translate-y-[-20px]');
+            setTimeout(() => { toast.classList.add('opacity-0', 'translate-y-[-20px]'); }, 3000);
+        }
+
+        function saveTripToHistory() {
+            const km = totalDistanceMeters / 1000;
+            const trips = JSON.parse(localStorage.getItem('dtv_trips') || '[]');
+            trips.unshift({
+                id: Date.now(),
+                date: new Date().toLocaleDateString('es-ES'),
+                startTime: tripStartTime ? tripStartTime.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}) : '--:--',
+                endTime: new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
+                distance: km.toFixed(2),
+                cost: (km * COST_PER_KM).toFixed(2),
+                path: pathCoordinates.map(p => ({lat: p.lat, lng: p.lng}))
+            });
+            localStorage.setItem('dtv_trips', JSON.stringify(trips));
+        }
+
+        function toggleHistory() {
+            const modal = document.getElementById('historyModal');
+            if (modal.classList.contains('hidden')) { renderHistory(); modal.classList.remove('hidden'); }
+            else modal.classList.add('hidden');
+        }
+
+        function renderHistory() {
+            const list = document.getElementById('historyList');
+            const trips = JSON.parse(localStorage.getItem('dtv_trips') || '[]');
+            document.getElementById('historyCount').innerText = `${trips.length} Viajes`;
+            list.innerHTML = '';
+            if (trips.length === 0) list.innerHTML = '<div class="text-center text-gray-400 py-8">Sin historial</div>';
+            
+            trips.forEach(t => {
+                const item = document.createElement('div');
+                item.className = 'bg-white border p-3 rounded-lg shadow-sm flex justify-between items-center';
+                item.innerHTML = `
+                    <div><div class="text-xs text-gray-500 font-bold">${t.date} | ${t.startTime}-${t.endTime}</div>
+                    <div class="font-bold text-slate-800">${t.distance} km <span class="text-yellow-600 ml-2">Bs ${t.cost}</span></div></div>
+                    <div class="flex gap-2"><button onclick="viewTrip(${t.id})" class="text-blue-500 bg-blue-50 p-2 rounded"><i class="fa-solid fa-eye"></i></button>
+                    <button onclick="delTrip(${t.id})" class="text-rose-500 bg-rose-50 p-2 rounded"><i class="fa-solid fa-trash"></i></button></div>`;
+                list.appendChild(item);
+            });
+        }
+
+        function viewTrip(id) {
+            const trips = JSON.parse(localStorage.getItem('dtv_trips') || '[]');
+            const t = trips.find(x => x.id === id); if(!t) return;
+            toggleHistory();
+            if(userPathLine) map.removeLayer(userPathLine);
+            if(viewModeLine) map.removeLayer(viewModeLine);
+            viewModeLine = L.polyline(t.path.map(p=>[p.lat, p.lng]), {color:'#9333ea', weight:6}).addTo(map);
+            map.fitBounds(viewModeLine.getBounds());
+            distanceDisplay.innerText = t.distance; costDisplay.innerText = t.cost;
+            document.getElementById('btnCloseView').classList.remove('hidden');
+            btnStart.disabled = true; updateStatusText(`Historial: ${t.date}`, "wait");
+        }
+
+        function exitViewMode() {
+            if(viewModeLine) map.removeLayer(viewModeLine); viewModeLine = null;
+            document.getElementById('btnCloseView').classList.add('hidden');
+            btnStart.disabled = false; distanceDisplay.innerText = "0.00"; costDisplay.innerText = "0.00";
+            updateStatusText(simulationMode ? "Modo Manual" : "Listo", "idle"); 
+        }
+
+        function delTrip(id) {
+            if(!confirm("¿Eliminar?")) return;
+            let trips = JSON.parse(localStorage.getItem('dtv_trips') || '[]');
+            localStorage.setItem('dtv_trips', JSON.stringify(trips.filter(t => t.id !== id)));
+            renderHistory();
+        }
+        function clearHistory() { if(confirm("¿Borrar todo?")) { localStorage.removeItem('dtv_trips'); renderHistory(); } }
+        function centerMapOnUser() { attemptGetLocation(); }
+    </script>
+</body>
+</html>
